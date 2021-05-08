@@ -1,4 +1,5 @@
 #include<stdlib.h>
+#include<unistd.h>
 #include<stdio.h>
 #include<xcb/xcb.h>
 #include<cairo-xcb.h>
@@ -10,11 +11,11 @@ xcb_atom_t get_atom_from_name(xcb_connection_t *xc, char * name){
 	xcb_intern_atom_cookie_t cookie = 
 		//obtain atom of the selection
 		xcb_intern_atom(xc,0,strlen(name),name);
-	xcb_intern_atom_reply_t *reply;
+	xcb_intern_atom_reply_t *reply = NULL;
 	//get reply
 	reply = xcb_intern_atom_reply(xc,cookie,NULL);
 	xcb_atom_t atom = reply->atom;
-	printf("ATOM ID = %u0 \n",atom);
+	printf("%s = %u0 \n",name, atom);
 	return atom;
 }
 
@@ -24,31 +25,53 @@ xcb_atom_t get_atom_from_name(xcb_connection_t *xc, char * name){
 
 //obtain the window ID owning the manager selections
 
-xcb_window_t get_manager_selection_owner(xcb_connection_t *xc){
-	xcb_get_selection_owner_cookie_t cookie1 =
+xcb_window_t get_manager_selection_owner(xcb_connection_t *xc,int *reterr){
+	xcb_get_selection_owner_cookie_t cookie = 
 		xcb_get_selection_owner(
 				xc, 
 				get_atom_from_name(xc,"_NET_SYSTEM_TRAY_S0"));
 
-	xcb_get_selection_owner_reply_t  *reply1;
-	reply1 = xcb_get_selection_owner_reply(xc,cookie1,NULL);
-	xcb_window_t owner = reply1->owner;
-	printf("Selection owner ID = %u0\n", owner);
-	return owner;
+	xcb_get_selection_owner_reply_t  *reply = NULL;
+	xcb_generic_error_t **error = NULL;
+
+	reply = xcb_get_selection_owner_reply(xc,cookie,error);
+	if(error){
+		*reterr = 1;
+	}
+
+	printf("Manager Selection Owner ID = %u0\n", reply->owner);
+	return reply->owner;
 }
 
 void draw_clock(
-		uint32_t h, 
-		uint32_t m, 
 		xcb_connection_t *xc, 
 		xcb_window_t win, 
 		xcb_visualtype_t *visual_type,
-		uint32_t size){
+		uint32_t size)
+{
+
+	//TODO obtain window size and draw accordingly
+	
+	//TODO get time
+	uint32_t h;
+	uint32_t m;
+	{
+		time_t raw_time;
+		struct tm *time_struct;
+		time( &raw_time );
+		time_struct = localtime( &raw_time );
+		h = time_struct->tm_hour;
+		m = time_struct->tm_min;
+
+		//use dummy time
+		//h = 10;
+		//m = 10;
+	}
 
 	double center_x = size/2.0;
 	double center_y = size/2.0;
 
-	double line_w = 1.5/16.0 * size;
+	double line_w = 0.8/16.0 * size;
 
 	double h_arm_r = 5.0/16.0 * size;
 	double m_arm_r = 7.0/16.0 * size;
@@ -73,7 +96,7 @@ void draw_clock(
 	cairo_new_path(cr);
 	cairo_arc(cr,center_x,center_y,h_arm_r,h_arm_a-3.14/2.0,h_arm_a-3.14/2.0);
 	cairo_line_to(cr,center_x,center_y);
-	cairo_arc(cr,center_x,center_y,h_arm_r/2.0,h_arm_a+3.14/2.0,h_arm_a+3.14/2.0);
+	cairo_arc(cr,center_x,center_y,h_arm_r/3.0,h_arm_a+3.14/2.0,h_arm_a+3.14/2.0);
 	cairo_line_to(cr,center_x,center_y);
 	cairo_close_path(cr);
 	cairo_stroke(cr);
@@ -125,8 +148,15 @@ int main(int argc, char *argv[]){
 	//selection name is assuming screen = 0
 	//TODO obtain the screen number programmatically
 
-	xcb_window_t owner = 
-		get_manager_selection_owner(xc);
+	xcb_window_t owner;
+	int err=0;
+	owner = get_manager_selection_owner(xc,&err);
+
+	while(err){
+		printf("Tray not found\n");
+		sleep(1);
+		owner = get_manager_selection_owner(xc,&err);
+	}
 
 	//TODO ask the dimension of the available tray window
 	
@@ -145,7 +175,7 @@ int main(int argc, char *argv[]){
 			XCB_CW_EVENT_MASK ;
 		uint32_t values[2] = {
 			screen->black_pixel,
-			XCB_EVENT_MASK_EXPOSURE,};
+			XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_STRUCTURE_NOTIFY,};
 
 		xcb_create_window(
 			xc, 
@@ -186,55 +216,48 @@ int main(int argc, char *argv[]){
 
 	//Make sure we understand the initial state of our program before mapping the window
 	
+	//check if we are reparented
+	xcb_generic_event_t *e;
+	int reparented = 0;
+	printf("Wait for reparenting\n");
+	while(!reparented){
+		if((e = xcb_poll_for_event(xc)))
+			switch (e->response_type & ~0x80){
+				case XCB_REPARENT_NOTIFY:
+					reparented = 1;
+					printf("Reparented!\n");
+					break;
+				default:
+					printf("...\n");
+					usleep(1000);
+					break;
+			}
+	}
+	
 	//show window
 	xcb_map_window(xc,win);
 
-	//loop and wait for events forever
-	xcb_generic_event_t *ev;
-	while((ev = xcb_wait_for_event(xc))){
-		switch(ev->response_type & ~0x80 ){ /* I don't know what the 0x80 mask represents */
-		case XCB_EXPOSE: {
+	//loop and draw forever
+	while(1){
+		//draw clock every second
+		draw_clock(xc,win,visual_type,16);
+		xcb_flush(xc);
 
-			//printf("Exposed\n");
-			
-			//draw clock
-			//TODO obtain window size and draw accordingly
-			
-			//TODO get time
-			time_t raw_time;
-			struct tm *time_struct;
-			time( &raw_time );
-			time_struct = localtime( &raw_time );
+		sleep(1);
 
-			uint32_t h = time_struct->tm_hour;
-			uint32_t m = time_struct->tm_min;
-
-			//use dummy time
-			//uint32_t h = 10;
-			//uint32_t m = 10;
-
-			draw_clock(h,m,xc,win,visual_type,16);
-
-			break;
-						 }
-		default:
-			//printf("Do nothing\n");
-			break;
-
-			//TODO on click, make another window
-			//to show bigger clock and date
-			//with close button
-			//and "press any button to close" functionality
-		}
+		//TODO on click, make another window
+		//to show bigger clock and date
+		//with close button
+		//and "press any button to close" functionality
 
 		//flush every loop to make sure things are drawn
 		//NOTE: Things did occasionally not drawn if unlucky 
 		//(needs to hide-unhide window multiple times to get it drawn sometimes)
-		xcb_flush(xc);
+		//
+		//TODO: Handle signals so we can exit gracefully
 	}
 
 	//wrap up
-	free(ev);
 	xcb_disconnect(xc);
 
 	return 0;
