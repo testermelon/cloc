@@ -71,13 +71,17 @@ void draw_clock(
 	double center_x = size/2.0;
 	double center_y = size/2.0;
 
-	double line_w = 0.8/16.0 * size;
+	double line_w = 1.5/16.0 * size;
 
-	double h_arm_r = 5.0/16.0 * size;
-	double m_arm_r = 7.0/16.0 * size;
+	double h_arm_r = 6.5/16.0 * size;
+	double m_arm_r = 6.5/16.0 * size;
 
-	double h_arm_a = 2.0*3.14*( h/12.0 + m/60.0/12.0); 
+	double h_arm_a = 2.0*3.14*( h/12.0 + m/60.0/12.0);
 	double m_arm_a = 2.0*3.14*(m/60.0);
+
+	//trasform to cairo&s radial coordinate
+	h_arm_a -= 3.14/2.0;
+	m_arm_a -= 3.14/2.0;
 
 	//prepare cairo
 	cairo_surface_t *xc_sfc;
@@ -89,35 +93,42 @@ void draw_clock(
 	cairo_set_line_width(cr,line_w);
 	cairo_set_antialias(cr,CAIRO_ANTIALIAS_BEST);
 
-	cairo_push_group(cr);
-	
+	//clear to transparency 
+	cairo_set_source_rgba(cr, 0.0,0.0,0.0,0.0); 
+	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE); 
+	cairo_paint(cr); 
+	cairo_set_operator(cr, CAIRO_OPERATOR_OVER); 
+
 	//hour arm
-	cairo_set_source_rgb(cr, 1.0,1.0,1.0);
+	cairo_set_source_rgba(cr, 1.0,1.0,1.0,1.0);
 	cairo_new_path(cr);
-	cairo_arc(cr,center_x,center_y,h_arm_r,h_arm_a-3.14/2.0,h_arm_a-3.14/2.0);
+	cairo_arc(cr, center_x, center_y, h_arm_r, h_arm_a, h_arm_a);
 	cairo_line_to(cr,center_x,center_y);
-	cairo_arc(cr,center_x,center_y,h_arm_r/3.0,h_arm_a+3.14/2.0,h_arm_a+3.14/2.0);
+	cairo_arc(cr, center_x, center_y, h_arm_r/3.0, h_arm_a+3.14, h_arm_a+3.14);
 	cairo_line_to(cr,center_x,center_y);
-	cairo_close_path(cr);
 	cairo_stroke(cr);
 	//minute arm
-	cairo_set_source_rgb(cr,0.0,0.8,1.0);
+	cairo_set_source_rgba(cr,0.0,0.8,1.0,1.0);
 	cairo_new_path(cr);
-	cairo_arc(cr,center_x,center_y,m_arm_r,-3.14/2.0,m_arm_a-3.14/2.0);
-	cairo_stroke(cr);
-	//give full round for framing 
-	cairo_set_source_rgb(cr,0.4,0.3,0.4);
-	cairo_new_path(cr);
-	cairo_arc(cr,center_x,center_y,m_arm_r,m_arm_a-3.14/2.0,3.0*3.14/2.0);
+	cairo_arc(cr,center_x,center_y,m_arm_r,-3.14/2.0,m_arm_a);
 	cairo_stroke(cr);
 
-	cairo_pop_group_to_source(cr);
-	cairo_paint(cr);
+	//give framing 
+	if(1 && (m_arm_a < 1.5*3.14) ){
+		cairo_set_source_rgba(cr,0.4,0.3,0.4,1.0);
+		cairo_new_path(cr);
+		cairo_arc(cr, center_x, center_y, m_arm_r, m_arm_a,3.0*3.14/2.0);
+		cairo_stroke(cr);
+	}
+
 	cairo_surface_flush(xc_sfc);
 }
 
 
 int main(int argc, char *argv[]){
+
+	int dock = 1;
+	int icon_size = 16;
 
 	//connect to X server
 	xcb_connection_t 	*xc;
@@ -171,10 +182,10 @@ int main(int argc, char *argv[]){
 		//prepare masks and values
 		//use a block to force short lifetime of these vars
 		uint32_t mask = 
-			XCB_CW_BACK_PIXEL | 
+			//XCB_CW_BACK_PIXEL | 
 			XCB_CW_EVENT_MASK ;
-		uint32_t values[2] = {
-			screen->black_pixel,
+		uint32_t values[1] = {
+			//screen->white_pixel,
 			XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_STRUCTURE_NOTIFY,};
 
 		xcb_create_window(
@@ -183,7 +194,7 @@ int main(int argc, char *argv[]){
 			win, 
 			screen->root, 
 			0,0, 
-			16,16, 
+			icon_size,icon_size, 
 			0, 
 			XCB_WINDOW_CLASS_INPUT_OUTPUT, 
 			screen->root_visual, 
@@ -204,34 +215,36 @@ int main(int argc, char *argv[]){
 	msg.data.data32[3] = 0;
 	msg.data.data32[4] = 0;
 
-	xcb_send_event(
-			xc,
-			0, // propagate = false
-			owner,
-			XCB_EVENT_MASK_NO_EVENT,
-			(const char *)&msg 
-			);
+	if(dock){
+		xcb_send_event(
+				xc,
+				0, // propagate = false
+				owner,
+				XCB_EVENT_MASK_NO_EVENT,
+				(const char *)&msg 
+				);
 
-	xcb_flush(xc);
+		xcb_flush(xc);
 
-	//Make sure we understand the initial state of our program before mapping the window
-	
-	//check if we are reparented
-	xcb_generic_event_t *e;
-	int reparented = 0;
-	printf("Wait for reparenting\n");
-	while(!reparented){
-		if((e = xcb_poll_for_event(xc)))
-			switch (e->response_type & ~0x80){
-				case XCB_REPARENT_NOTIFY:
-					reparented = 1;
-					printf("Reparented!\n");
-					break;
-				default:
-					printf("...\n");
-					usleep(1000);
-					break;
-			}
+		//Make sure we understand the initial state of our program before mapping the window
+		
+		//check if we are reparented
+		xcb_generic_event_t *e;
+		int reparented = 0;
+		printf("Wait for reparenting\n");
+		while(!reparented){
+			if((e = xcb_poll_for_event(xc)))
+				switch (e->response_type & ~0x80){
+					case XCB_REPARENT_NOTIFY:
+						reparented = 1;
+						printf("Reparented!\n");
+						break;
+					default:
+						printf("...\n");
+						usleep(1000);
+						break;
+				}
+		}
 	}
 	
 	//show window
@@ -240,7 +253,7 @@ int main(int argc, char *argv[]){
 	//loop and draw forever
 	while(1){
 		//draw clock every second
-		draw_clock(xc,win,visual_type,16);
+		draw_clock(xc,win,visual_type,icon_size);
 		xcb_flush(xc);
 
 		sleep(1);
