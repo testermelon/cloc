@@ -51,6 +51,9 @@ void draw_clock(
 {
 
 	//TODO obtain window size and draw accordingly
+	//
+	
+
 	
 	//TODO get time
 	uint32_t h;
@@ -124,15 +127,47 @@ void draw_clock(
 	cairo_surface_flush(xc_sfc);
 }
 
+int get_tray_size() {
+	// Let's find out how to obtain parent size
+	return 20;
+}
+
 
 int main(int argc, char *argv[]){
 
 	int dock = 1;
-	int icon_size = 16;
+	int icon_size = 24;
+
+	/*
+	if(argc < 2 ){
+		printf("usage: cloc <d|f> size");
+		return 0;
+	}else{
+	if(argc = 2 ){
+		if(argv[0] == "d") dock = 1; 
+		else 
+		if(argv[0] == "f") dock = 0; 
+		else{
+			printf("usage: cloc <d|f> size");
+			return 0;
+		}
+		if(argv[0] == "d") dock = 1; 
+		else 
+		if(argv[0] == "f") dock = 0; 
+		else{
+			printf("usage: cloc <d|f> size");
+			return 0;
+		}
+		*/
+
 
 	//connect to X server
 	xcb_connection_t 	*xc;
 	xc = xcb_connect(NULL,NULL); //(display name, screen no)
+
+	//for events, and other states
+	xcb_generic_event_t *e;
+	int reparented = 0;
 
 	//get first screen? 
 	xcb_screen_t 		*screen;
@@ -192,7 +227,7 @@ int main(int argc, char *argv[]){
 			xc, 
 			XCB_COPY_FROM_PARENT, 
 			win, 
-			screen->root, 
+			owner, 
 			0,0, 
 			icon_size,icon_size, 
 			0, 
@@ -200,6 +235,9 @@ int main(int argc, char *argv[]){
 			screen->root_visual, 
 			mask, values);
 	}
+
+	//set window properties
+	
 
 
 	//compose message of docking
@@ -229,8 +267,6 @@ int main(int argc, char *argv[]){
 		//Make sure we understand the initial state of our program before mapping the window
 		
 		//check if we are reparented
-		xcb_generic_event_t *e;
-		int reparented = 0;
 		printf("Wait for reparenting\n");
 		while(!reparented){
 			if((e = xcb_poll_for_event(xc)))
@@ -252,10 +288,40 @@ int main(int argc, char *argv[]){
 
 	//loop and draw forever
 	while(1){
-		//draw clock every second
+
+		if(dock){
+			while(!reparented){
+				xcb_send_event(
+						xc,
+						0, // propagate = false
+						owner,
+						XCB_EVENT_MASK_NO_EVENT,
+						(const char *)&msg 
+						);
+
+				xcb_flush(xc);
+
+				printf("Wait for reparenting\n");
+
+				if((e = xcb_poll_for_event(xc)))
+					switch (e->response_type & ~0x80){
+						case XCB_REPARENT_NOTIFY:
+							reparented = 1;
+							printf("Reparented!\n");
+							break;
+						default:
+							printf("...\n");
+							usleep(1000);
+							break;
+					}
+			}
+		}
+
+		icon_size = get_tray_size();
 		draw_clock(xc,win,visual_type,icon_size);
 		xcb_flush(xc);
 
+		//draw clock at least every 10 second
 		sleep(1);
 
 		//TODO on click, make another window
