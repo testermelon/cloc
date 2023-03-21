@@ -7,130 +7,20 @@
 #include<time.h>
 #include<string.h>
 
-xcb_atom_t get_atom_from_name(xcb_connection_t *xc, char * name){
-	xcb_intern_atom_cookie_t cookie = 
-		//obtain atom of the selection
-		xcb_intern_atom(xc,0,strlen(name),name);
-	xcb_intern_atom_reply_t *reply = NULL;
-	//get reply
-	reply = xcb_intern_atom_reply(xc,cookie,NULL);
-	xcb_atom_t atom = reply->atom;
-	printf("%s = %u0 \n",name, atom);
-	return atom;
-}
+xcb_atom_t get_atom_from_name(
+		xcb_connection_t *xc, 
+		char * name);
 
-//get the owner window of manager selection, 
-//selection name is assuming screen = 0
-//TODO obtain the screen number programmatically
-
-//obtain the window ID owning the manager selections
-
-xcb_window_t get_manager_selection_owner(xcb_connection_t *xc,int *reterr){
-	xcb_get_selection_owner_cookie_t cookie = 
-		xcb_get_selection_owner(
-				xc, 
-				get_atom_from_name(xc,"_NET_SYSTEM_TRAY_S0"));
-
-	xcb_get_selection_owner_reply_t  *reply = NULL;
-	xcb_generic_error_t **error = NULL;
-
-	reply = xcb_get_selection_owner_reply(xc,cookie,error);
-	if(error){
-		*reterr = 1;
-	}
-
-	printf("Manager Selection Owner ID = %u0\n", reply->owner);
-	return reply->owner;
-}
+xcb_window_t get_manager_selection_owner(
+		xcb_connection_t *xc,
+		int *reterr);
 
 void draw_clock(
 		xcb_connection_t *xc, 
 		xcb_window_t win, 
 		xcb_visualtype_t *visual_type,
-		uint32_t size)
-{
+		uint32_t size);
 
-	//TODO obtain window size and draw accordingly
-	//
-	
-
-	
-	//TODO get time
-	uint32_t h;
-	uint32_t m;
-	{
-		time_t raw_time;
-		struct tm *time_struct;
-		time( &raw_time );
-		time_struct = localtime( &raw_time );
-		h = time_struct->tm_hour;
-		m = time_struct->tm_min;
-
-		//use dummy time
-		//h = 10;
-		//m = 10;
-	}
-
-	double center_x = size/2.0;
-	double center_y = size/2.0;
-
-	double line_w = 1.5/16.0 * size;
-
-	double h_arm_r = 6.5/16.0 * size;
-	double m_arm_r = 6.5/16.0 * size;
-
-	double h_arm_a = 2.0*3.14*( h/12.0 + m/60.0/12.0);
-	double m_arm_a = 2.0*3.14*(m/60.0);
-
-	//trasform to cairo&s radial coordinate
-	h_arm_a -= 3.14/2.0;
-	m_arm_a -= 3.14/2.0;
-
-	//prepare cairo
-	cairo_surface_t *xc_sfc;
-
-	//create cairo context for xcb
-	xc_sfc = cairo_xcb_surface_create( xc, win, visual_type, size, size);
-	cairo_t *cr = cairo_create(xc_sfc);
-
-	cairo_set_line_width(cr,line_w);
-	cairo_set_antialias(cr,CAIRO_ANTIALIAS_BEST);
-
-	//clear to transparency 
-	cairo_set_source_rgba(cr, 0.0,0.0,0.0,0.0); 
-	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE); 
-	cairo_paint(cr); 
-	cairo_set_operator(cr, CAIRO_OPERATOR_OVER); 
-
-	//hour arm
-	cairo_set_source_rgba(cr, 1.0,1.0,1.0,1.0);
-	cairo_new_path(cr);
-	cairo_arc(cr, center_x, center_y, h_arm_r, h_arm_a, h_arm_a);
-	cairo_line_to(cr,center_x,center_y);
-	cairo_arc(cr, center_x, center_y, h_arm_r/3.0, h_arm_a+3.14, h_arm_a+3.14);
-	cairo_line_to(cr,center_x,center_y);
-	cairo_stroke(cr);
-	//minute arm
-	cairo_set_source_rgba(cr,0.0,0.8,1.0,1.0);
-	cairo_new_path(cr);
-	cairo_arc(cr,center_x,center_y,m_arm_r,-3.14/2.0,m_arm_a);
-	cairo_stroke(cr);
-
-	//give framing 
-	if(1 && (m_arm_a < 1.5*3.14) ){
-		cairo_set_source_rgba(cr,0.4,0.3,0.4,1.0);
-		cairo_new_path(cr);
-		cairo_arc(cr, center_x, center_y, m_arm_r, m_arm_a,3.0*3.14/2.0);
-		cairo_stroke(cr);
-	}
-
-	cairo_surface_flush(xc_sfc);
-}
-
-int get_tray_size() {
-	// Let's find out how to obtain parent size
-	return 200;
-}
 
 
 int main(int argc, char *argv[]){
@@ -140,8 +30,6 @@ int main(int argc, char *argv[]){
 	//connect to X server
 	xcb_connection_t 	*xc;
 	xc = xcb_connect(NULL,NULL); //(display name, screen no)
-
-	//check error
 	if(xcb_connection_has_error(xc)){
 		printf("X connection error\n");
 		return -1;
@@ -150,19 +38,16 @@ int main(int argc, char *argv[]){
 	}
 
 	//get connection setup
-		
-	//get first screen? 
 	xcb_screen_t 		*screen;
 	screen = xcb_setup_roots_iterator( xcb_get_setup(xc) ).data;
+	printf("screen root = 0x%x\n", screen->root);
 
 	//obtain visualtype 
 	xcb_visualtype_t *visual_type;
 	//iterate over all depths
-	xcb_depth_iterator_t 
-		depth_iter = xcb_screen_allowed_depths_iterator(screen);
+	xcb_depth_iterator_t depth_iter = xcb_screen_allowed_depths_iterator(screen);
 	for(;depth_iter.rem;xcb_depth_next(&depth_iter)) {
-		xcb_visualtype_iterator_t 
-			vis_iter = xcb_depth_visuals_iterator(depth_iter.data);
+		xcb_visualtype_iterator_t vis_iter = xcb_depth_visuals_iterator(depth_iter.data);
 		for(;vis_iter.rem;xcb_visualtype_next(&vis_iter)) {
 			if(screen->root_visual == vis_iter.data->visual_id) {
 				visual_type = vis_iter.data;
@@ -171,11 +56,9 @@ int main(int argc, char *argv[]){
 		}
 	}
 	//at this point visual_type contains the correct visual struct
+	//I should read the docs of iterator facilities in xcb lol
 
 	//get the owner window of manager selection, 
-	//selection name is assuming screen = 0
-	//TODO obtain the screen number programmatically
-
 	xcb_window_t owner;
 	int err=0;
 	owner = get_manager_selection_owner(xc,&err);
@@ -188,13 +71,14 @@ int main(int argc, char *argv[]){
 
 	//TODO ask the dimension of the available tray window
 	
-	//make and show a window
+
 	//gen id for window
 	xcb_window_t 
 		win = xcb_generate_id(xc);
 
-	printf( "Newly Generated Window ID =%x\n", (int)win );
+	printf( "Newly Generated Window ID = 0x%x\n", (int)win );
 	
+
 	//create icon window
 		//use a block to force short lifetime of these vars
 		//prepare masks and values
@@ -202,7 +86,10 @@ int main(int argc, char *argv[]){
 			XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
 		uint32_t values[2] = {
 			screen->black_pixel,
-			XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_PROPERTY_CHANGE
+			XCB_EVENT_MASK_EXPOSURE | 
+			XCB_EVENT_MASK_BUTTON_PRESS | 
+			XCB_EVENT_MASK_PROPERTY_CHANGE |
+			XCB_EVENT_MASK_STRUCTURE_NOTIFY
 		};
 
 		xcb_create_window(
@@ -227,6 +114,9 @@ int main(int argc, char *argv[]){
 	printf("Window map request sent\n");
 
 	xcb_generic_event_t * ev;
+
+	//take memo of current seq no.
+	int sequence_memo = 0;
 
 	//loop while no connection error
 	printf("Entering Event loop\n");
@@ -253,6 +143,41 @@ int main(int argc, char *argv[]){
 			case XCB_BUTTON_PRESS: {
 				xcb_button_press_event_t *button = (xcb_button_press_event_t *)ev;
 				printf("button=%d, x=%d, y=%d\n", button->detail, button->event_x, button->event_y);
+
+				if( button->detail == 1 ){
+					//left mouse click
+					
+					xcb_unmap_window(xc,win);
+
+					xcb_client_message_event_t dockmsg;
+					dockmsg.response_type = XCB_CLIENT_MESSAGE; //
+					dockmsg.format = 32; // options: 8, 16, 32
+					dockmsg.sequence = sequence_memo;
+					dockmsg.window = win; //icon window ID 
+					dockmsg.type = get_atom_from_name(xc,"_NET_SYSTEM_TRAY_OPCODE"); 
+					dockmsg.data.data32[0] = XCB_CURRENT_TIME;
+					dockmsg.data.data32[1] = 0; //SYSTEM_TRAY_REQUEST_DOCK
+					dockmsg.data.data32[2] = win;
+					dockmsg.data.data32[3] = 0;
+					dockmsg.data.data32[4] = 0;
+
+					xcb_send_event(
+							xc,
+							0, // propagate = false
+							owner,
+							XCB_EVENT_MASK_NO_EVENT,
+							(const char *)&dockmsg 
+							);
+					sequence_memo +=1;
+					xcb_flush(xc);
+					printf("Wait for reparenting\n");
+				}
+			}
+			case XCB_REPARENT_NOTIFY: {
+				printf("Reparented!\n");
+				xcb_reparent_notify_event_t *rep = (xcb_reparent_notify_event_t *)ev;
+				printf("new parent = 0x%x\n",rep->parent);
+				//if(rep->parent == screen->root){ xcb_map_window(xc,win); xcb_flush(xc); }
 			}
 		}
 
@@ -274,4 +199,121 @@ int main(int argc, char *argv[]){
 	xcb_disconnect(xc);
 
 	return 0;
+}
+
+
+void draw_clock(
+		xcb_connection_t *xc, 
+		xcb_window_t win, 
+		xcb_visualtype_t *visual_type,
+		uint32_t size)
+{
+
+	//obtaining time using time.h
+	uint32_t h;
+	uint32_t m;
+	{
+		time_t raw_time;
+		time( &raw_time );
+		struct tm *time_struct;
+		time_struct = localtime( &raw_time );
+		h = time_struct->tm_hour;
+		m = time_struct->tm_min;
+
+		//use dummy time
+		//h = 10;
+		//m = 10;
+	}
+
+	//size always assume square
+	double center_x = size/2.0;
+	double center_y = size/2.0;
+
+	double line_w = 1.5/16.0 * size;
+
+	double h_arm_r = 6.5/16.0 * size;
+	double m_arm_r = 6.5/16.0 * size;
+
+	double h_arm_a = 2.0*3.14*( h/12.0 + m/60.0/12.0);
+	double m_arm_a = 2.0*3.14*(m/60.0);
+
+	//trasform to cairo's radial coordinate
+	h_arm_a -= 3.14/2.0;
+	m_arm_a -= 3.14/2.0;
+
+	//prepare cairo
+	cairo_surface_t *xc_sfc;
+
+	//create cairo context for xcb
+	xc_sfc = cairo_xcb_surface_create( xc, win, visual_type, size, size);
+	cairo_t *cr = cairo_create(xc_sfc);
+
+	cairo_set_line_width(cr,line_w);
+	cairo_set_antialias(cr,CAIRO_ANTIALIAS_BEST);
+
+	//clear to transparency 
+	cairo_set_source_rgba(cr, 0.0,0.0,0.0,0.0); 
+	cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE); 
+	cairo_paint(cr); 
+	cairo_set_operator(cr, CAIRO_OPERATOR_OVER); 
+
+	//hour arm
+	cairo_set_source_rgba(cr, 1.0,1.0,1.0,1.0); //white
+	cairo_new_path(cr);
+	cairo_arc(cr, center_x, center_y, h_arm_r, h_arm_a, h_arm_a);
+	cairo_line_to(cr,center_x,center_y);
+	cairo_arc(cr, center_x, center_y, h_arm_r/3.0, h_arm_a+3.14, h_arm_a+3.14);
+	cairo_line_to(cr,center_x,center_y);
+	cairo_stroke(cr);
+	//minute arm
+	cairo_set_source_rgba(cr,0.0,0.8,1.0,1.0); //blueish
+	cairo_new_path(cr);
+	cairo_arc(cr,center_x,center_y,m_arm_r,-3.14/2.0,m_arm_a);
+	cairo_stroke(cr);
+
+	//give framing 
+	if(1 && (m_arm_a < 1.5*3.14) ){
+		cairo_set_source_rgba(cr,0.4,0.3,0.4,1.0); //grayish
+		cairo_new_path(cr);
+		cairo_arc(cr, center_x, center_y, m_arm_r, m_arm_a,3.0*3.14/2.0);
+		cairo_stroke(cr);
+	}
+
+	cairo_surface_flush(xc_sfc);
+}
+
+xcb_atom_t get_atom_from_name(xcb_connection_t *xc, char * name){
+	xcb_intern_atom_cookie_t cookie = 
+		//obtain atom of the selection
+		xcb_intern_atom(xc,0,strlen(name),name);
+	xcb_intern_atom_reply_t *reply = NULL;
+	//get reply
+	reply = xcb_intern_atom_reply(xc,cookie,NULL);
+	xcb_atom_t atom = reply->atom;
+	printf("%s = 0x%x0 \n",name, atom);
+	return atom;
+}
+
+//get the owner window of manager selection, 
+//selection name is assuming screen = 0
+//TODO obtain the screen number programmatically
+
+//obtain the window ID owning the manager selections
+
+xcb_window_t get_manager_selection_owner(xcb_connection_t *xc,int *reterr){
+	xcb_get_selection_owner_cookie_t cookie = 
+		xcb_get_selection_owner(
+				xc, 
+				get_atom_from_name(xc,"_NET_SYSTEM_TRAY_S0"));
+
+	xcb_get_selection_owner_reply_t  *reply = NULL;
+	xcb_generic_error_t **error = NULL;
+
+	reply = xcb_get_selection_owner_reply(xc,cookie,error);
+	if(error){
+		*reterr = 1;
+	}
+
+	printf("Manager Selection Owner ID = 0x%x\n", reply->owner);
+	return reply->owner;
 }
