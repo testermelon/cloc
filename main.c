@@ -129,46 +129,28 @@ void draw_clock(
 
 int get_tray_size() {
 	// Let's find out how to obtain parent size
-	return 20;
+	return 200;
 }
 
 
 int main(int argc, char *argv[]){
 
-	int dock = 1;
-	int icon_size = 24;
-
-	/*
-	if(argc < 2 ){
-		printf("usage: cloc <d|f> size");
-		return 0;
-	}else{
-	if(argc = 2 ){
-		if(argv[0] == "d") dock = 1; 
-		else 
-		if(argv[0] == "f") dock = 0; 
-		else{
-			printf("usage: cloc <d|f> size");
-			return 0;
-		}
-		if(argv[0] == "d") dock = 1; 
-		else 
-		if(argv[0] == "f") dock = 0; 
-		else{
-			printf("usage: cloc <d|f> size");
-			return 0;
-		}
-		*/
-
+	int icon_size = 200;
 
 	//connect to X server
 	xcb_connection_t 	*xc;
 	xc = xcb_connect(NULL,NULL); //(display name, screen no)
 
-	//for events, and other states
-	xcb_generic_event_t *e;
-	int reparented = 0;
+	//check error
+	if(xcb_connection_has_error(xc)){
+		printf("X connection error\n");
+		return -1;
+	}else{
+		printf("X connection success\n");
+	}
 
+	//get connection setup
+		
 	//get first screen? 
 	xcb_screen_t 		*screen;
 	screen = xcb_setup_roots_iterator( xcb_get_setup(xc) ).data;
@@ -207,122 +189,72 @@ int main(int argc, char *argv[]){
 	//TODO ask the dimension of the available tray window
 	
 	//make and show a window
-	
 	//gen id for window
 	xcb_window_t 
 		win = xcb_generate_id(xc);
+
+	printf( "Newly Generated Window ID =%x\n", (int)win );
 	
 	//create icon window
-	{
-		//prepare masks and values
 		//use a block to force short lifetime of these vars
+		//prepare masks and values
 		uint32_t mask = 
-			//XCB_CW_BACK_PIXEL | 
-			XCB_CW_EVENT_MASK ;
-		uint32_t values[1] = {
-			//screen->white_pixel,
-			XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_STRUCTURE_NOTIFY,};
+			XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
+		uint32_t values[2] = {
+			screen->black_pixel,
+			XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_PROPERTY_CHANGE
+		};
 
 		xcb_create_window(
 			xc, 
 			XCB_COPY_FROM_PARENT, 
 			win, 
-			owner, 
+			screen->root, 
 			0,0, 
 			icon_size,icon_size, 
 			0, 
 			XCB_WINDOW_CLASS_INPUT_OUTPUT, 
 			screen->root_visual, 
 			mask, values);
-	}
+
+		printf("Created New Window\n");
 
 	//set window properties
-	
 
-
-	//compose message of docking
-	xcb_client_message_event_t msg;
-	msg.response_type = XCB_CLIENT_MESSAGE; //
-	msg.format = 32; // options: 8, 16, 32
-	msg.sequence = 0; //TODO: check 
-	msg.window = win; //icon window ID 
-	msg.type = get_atom_from_name(xc,"_NET_SYSTEM_TRAY_OPCODE"); 
-	msg.data.data32[0] = XCB_CURRENT_TIME;
-	msg.data.data32[1] = 0; //SYSTEM_TRAY_REQUEST_DOCK
-	msg.data.data32[2] = win;
-	msg.data.data32[3] = 0;
-	msg.data.data32[4] = 0;
-
-	if(dock){
-		xcb_send_event(
-				xc,
-				0, // propagate = false
-				owner,
-				XCB_EVENT_MASK_NO_EVENT,
-				(const char *)&msg 
-				);
-
-		xcb_flush(xc);
-
-		//Make sure we understand the initial state of our program before mapping the window
-		
-		//check if we are reparented
-		printf("Wait for reparenting\n");
-		while(!reparented){
-			if((e = xcb_poll_for_event(xc)))
-				switch (e->response_type & ~0x80){
-					case XCB_REPARENT_NOTIFY:
-						reparented = 1;
-						printf("Reparented!\n");
-						break;
-					default:
-						printf("...\n");
-						usleep(1000);
-						break;
-				}
-		}
-	}
-	
 	//show window
 	xcb_map_window(xc,win);
+	xcb_flush(xc);
+	printf("Window map request sent\n");
 
-	//loop and draw forever
-	while(1){
+	xcb_generic_event_t * ev;
 
-		if(dock){
-			while(!reparented){
-				xcb_send_event(
-						xc,
-						0, // propagate = false
-						owner,
-						XCB_EVENT_MASK_NO_EVENT,
-						(const char *)&msg 
-						);
+	//loop while no connection error
+	printf("Entering Event loop\n");
+	while(xcb_connection_has_error(xc) == 0){
+		
+		ev = xcb_poll_for_event(xc);
+		if(ev == NULL) continue;
 
-				xcb_flush(xc);
+		printf("Response Type = %d\n",ev->response_type & ~0x80 );
 
-				printf("Wait for reparenting\n");
+		switch(ev->response_type & ~0x80){
+			case XCB_EXPOSE: {
+				xcb_expose_event_t *expose = (xcb_expose_event_t *)ev;
+				printf("H = %d, W = %d\n", expose->height, expose->width);
 
-				if((e = xcb_poll_for_event(xc)))
-					switch (e->response_type & ~0x80){
-						case XCB_REPARENT_NOTIFY:
-							reparented = 1;
-							printf("Reparented!\n");
-							break;
-						default:
-							printf("...\n");
-							usleep(1000);
-							break;
-					}
+				if(expose->height > expose->width) 
+					icon_size=expose->width;
+				else
+					icon_size=expose->height;
+
+				draw_clock(xc,win,visual_type,icon_size);
+				xcb_flush(xc); 
+			}
+			case XCB_BUTTON_PRESS: {
+				xcb_button_press_event_t *button = (xcb_button_press_event_t *)ev;
+				printf("button=%d, x=%d, y=%d\n", button->detail, button->event_x, button->event_y);
 			}
 		}
-
-		icon_size = get_tray_size();
-		draw_clock(xc,win,visual_type,icon_size);
-		xcb_flush(xc);
-
-		//draw clock at least every 10 second
-		sleep(1);
 
 		//TODO on click, make another window
 		//to show bigger clock and date
@@ -334,6 +266,8 @@ int main(int argc, char *argv[]){
 		//(needs to hide-unhide window multiple times to get it drawn sometimes)
 		//
 		//TODO: Handle signals so we can exit gracefully
+		
+		free(ev);
 	}
 
 	//wrap up
