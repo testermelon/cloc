@@ -21,11 +21,23 @@ void draw_clock(
 		xcb_visualtype_t *visual_type,
 		uint32_t size);
 
-
+void send_dock_message(
+		xcb_connection_t *xc, 
+		xcb_window_t win,
+		xcb_window_t owner,
+		int *sequence_memo);
 
 int main(int argc, char *argv[]){
 
 	int icon_size = 200;
+
+	xcb_generic_event_t * ev;
+
+	//take memo of current seq no.
+	int sequence_memo = 0;
+	
+	//initialize memo of time 
+	time_t last_time_draw_seconds = time(NULL);
 
 	//connect to X server
 	xcb_connection_t 	*xc;
@@ -82,55 +94,72 @@ int main(int argc, char *argv[]){
 	//create icon window
 		//use a block to force short lifetime of these vars
 		//prepare masks and values
-		uint32_t mask = 
-			XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
-		uint32_t values[2] = {
-			screen->black_pixel,
-			XCB_EVENT_MASK_EXPOSURE | 
-			XCB_EVENT_MASK_BUTTON_PRESS | 
-			XCB_EVENT_MASK_PROPERTY_CHANGE |
-			XCB_EVENT_MASK_STRUCTURE_NOTIFY
-		};
+	uint32_t mask = 
+		XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
+	uint32_t values[2] = {
+		screen->black_pixel,
+		XCB_EVENT_MASK_EXPOSURE | 
+		XCB_EVENT_MASK_BUTTON_PRESS | 
+		XCB_EVENT_MASK_PROPERTY_CHANGE |
+		XCB_EVENT_MASK_STRUCTURE_NOTIFY
+	};
 
-		xcb_create_window(
-			xc, 
-			XCB_COPY_FROM_PARENT, 
-			win, 
-			screen->root, 
-			0,0, 
-			icon_size,icon_size, 
-			0, 
-			XCB_WINDOW_CLASS_INPUT_OUTPUT, 
-			screen->root_visual, 
-			mask, values);
+	xcb_create_window(
+		xc, 
+		XCB_COPY_FROM_PARENT, 
+		win, 
+		screen->root, 
+		0,0, 
+		icon_size,icon_size, 
+		0, 
+		XCB_WINDOW_CLASS_INPUT_OUTPUT, 
+		screen->root_visual, 
+		mask, values);
 
-		printf("Created New Window\n");
+	printf("Created New Window\n");
 
 	//set window properties
+	xcb_change_property(
+			xc,
+			XCB_PROP_MODE_REPLACE,
+			win,
+			get_atom_from_name(xc,"_NET_WM_NAME"),
+			get_atom_from_name(xc,"UTF8_STRING"),
+			8,
+			4,
+			"cloc"
+			);
+
+	send_dock_message(xc, win, owner, &sequence_memo);
+	xcb_flush(xc);
 
 	//show window
-	xcb_map_window(xc,win);
-	xcb_flush(xc);
-	printf("Window map request sent\n");
+	//xcb_map_window(xc,win);
+	//xcb_flush(xc);
+	//printf("Window map request sent\n");
 
-	xcb_generic_event_t * ev;
-
-	//take memo of current seq no.
-	int sequence_memo = 0;
 
 	//loop while no connection error
 	printf("Entering Event loop\n");
 	while(xcb_connection_has_error(xc) == 0){
+
+		//Draw clock when 15 seconds passed since last draw
+		if(time(NULL) - last_time_draw_seconds > 15 ) {
+			draw_clock(xc,win,visual_type,icon_size);
+			xcb_flush(xc);
+			last_time_draw_seconds = time(NULL);
+			printf("15 Seconds Timeout -> redraw at %d\n", (int)last_time_draw_seconds);
+		}
 		
 		ev = xcb_poll_for_event(xc);
 		if(ev == NULL) continue;
 
-		printf("Response Type = %d\n",ev->response_type & ~0x80 );
+		print_event_name_from_response_type(ev->response_type);
 
 		switch(ev->response_type & ~0x80){
 			case XCB_EXPOSE: {
 				xcb_expose_event_t *expose = (xcb_expose_event_t *)ev;
-				printf("H = %d, W = %d\n", expose->height, expose->width);
+				printf("    H = %d, W = %d\n", expose->height, expose->width);
 
 				if(expose->height > expose->width) 
 					icon_size=expose->width;
@@ -139,52 +168,57 @@ int main(int argc, char *argv[]){
 
 				draw_clock(xc,win,visual_type,icon_size);
 				xcb_flush(xc); 
-			}
+				last_time_draw_seconds = time(NULL);
+			}break;
 			case XCB_BUTTON_PRESS: {
 				xcb_button_press_event_t *button = (xcb_button_press_event_t *)ev;
-				printf("button=%d, x=%d, y=%d\n", button->detail, button->event_x, button->event_y);
+				printf("    button=%d, x=%d, y=%d\n", button->detail, button->event_x, button->event_y);
 
 				if( button->detail == 1 ){
 					//left mouse click
-					
-					xcb_unmap_window(xc,win);
-
-					xcb_client_message_event_t dockmsg;
-					dockmsg.response_type = XCB_CLIENT_MESSAGE; //
-					dockmsg.format = 32; // options: 8, 16, 32
-					dockmsg.sequence = sequence_memo;
-					dockmsg.window = win; //icon window ID 
-					dockmsg.type = get_atom_from_name(xc,"_NET_SYSTEM_TRAY_OPCODE"); 
-					dockmsg.data.data32[0] = XCB_CURRENT_TIME;
-					dockmsg.data.data32[1] = 0; //SYSTEM_TRAY_REQUEST_DOCK
-					dockmsg.data.data32[2] = win;
-					dockmsg.data.data32[3] = 0;
-					dockmsg.data.data32[4] = 0;
-
-					xcb_send_event(
-							xc,
-							0, // propagate = false
-							owner,
-							XCB_EVENT_MASK_NO_EVENT,
-							(const char *)&dockmsg 
-							);
-					sequence_memo +=1;
-					xcb_flush(xc);
-					printf("Wait for reparenting\n");
+					//xcb_unmap_window(xc,win); // i don't know why I need to unmap when trying to minimize to systray
+					//send_dock_message(xc, win, owner, &sequence_memo);
 				}
-			}
+			}break;
 			case XCB_REPARENT_NOTIFY: {
-				printf("Reparented!\n");
 				xcb_reparent_notify_event_t *rep = (xcb_reparent_notify_event_t *)ev;
-				printf("new parent = 0x%x\n",rep->parent);
+				printf("    new parent = 0x%x\n",rep->parent);
+
+				//check if wm still exist
+				//xcb_window_t check_wm;
+				//check_wm = get_manager_selection_owner(xc,&err);
+				//printf("    old manager = %d, new manager = %d\n", (int)check_wm, (int)owner);
+
+				if(rep->parent != screen->root) {
+					xcb_map_window(xc,win); 
+					xcb_flush(xc);
+				}
+
 				//if(rep->parent == screen->root){ xcb_map_window(xc,win); xcb_flush(xc); }
+			}break;
+			case XCB_UNMAP_NOTIFY: {
+				send_dock_message(xc, win, owner, &sequence_memo);
+				xcb_flush(xc);
+		    }break;
+			case XCB_CONFIGURE_NOTIFY: {
+				xcb_configure_notify_event_t *confnotif = (xcb_configure_notify_event_t *)ev;
+				printf("    win = %x\n", confnotif->window);
+				printf("    x = %x\n", confnotif->x);
+				printf("    y = %x\n", confnotif->y);
+				printf("    Width = %x\n", confnotif->width);
+				printf("    Height = %x\n", confnotif->height);
+				printf("    event = %x\n", confnotif->event);
+				printf("    above_sibling = %x\n", confnotif->above_sibling);
 			}
+
 		}
 
 		//TODO on click, make another window
 		//to show bigger clock and date
 		//with close button
 		//and "press any button to close" functionality
+		
+
 
 		//flush every loop to make sure things are drawn
 		//NOTE: Things did occasionally not drawn if unlucky 
@@ -201,6 +235,50 @@ int main(int argc, char *argv[]){
 	return 0;
 }
 
+void print_event_name_from_response_type (int resp) {
+	resp = resp & ~0x80;
+	printf("[Event] %d:", resp);
+	char *name;
+	switch( resp ) {
+		case 2: name = " XCB_KEY_PRESS "; break;
+		case 3: name = " XCB_KEY_RELEASE "; break;
+		case 4: name = " XCB_BUTTON_PRESS "; break;
+		case 5: name = " XCB_BUTTON_RELEASE  "; break;
+		case 6: name = " XCB_MOTION_NOTIFY  "; break;
+		case 7: name = " XCB_ENTER_NOTIFY  "; break;
+		case 8: name = " XCB_LEAVE_NOTIFY  "; break;
+		case 9: name = " XCB_FOCUS_IN  "; break;
+		case 10: name = " XCB_FOCUS_OUT  "; break;
+		case 11: name = " XCB_KEYMAP_NOTIFY  "; break;
+		case 12: name = " XCB_EXPOSE  "; break;
+		case 13: name = " XCB_GRAPHICS_EXPOSURE  "; break;
+		case 14: name = " XCB_NO_EXPOSURE  "; break;
+		case 15: name = " XCB_VISIBILITY_NOTIFY  "; break;
+		case 16: name = " XCB_CREATE_NOTIFY  "; break;
+		case 17: name = " XCB_DESTROY_NOTIFY  "; break;
+		case 18: name = " XCB_UNMAP_NOTIFY "; break;
+		case 19: name = " XCB_MAP_NOTIFY "; break;
+		case 20: name = " XCB_MAP_REQUEST "; break;
+		case 21: name = " XCB_REPARENT_NOTIFY  "; break;
+		case 22: name = " XCB_CONFIGURE_NOTIFY  "; break;
+		case 23: name = " XCB_CONFIGURE_REQUEST  "; break;
+		case 24: name = " XCB_GRAVITY_NOTIFY  "; break;
+		case 25: name = " XCB_RESIZE_REQUEST  "; break;
+		case 26: name = " XCB_CIRCULATE_NOTIFY  "; break;
+		case 27: name = " XCB_CIRCULATE_REQUEST  "; break;
+		case 28: name = " XCB_PROPERTY_NOTIFY  "; break;
+		case 29: name = " XCB_SELECTION_CLEAR  "; break;
+		case 30: name = " XCB_SELECTION_REQUEST  "; break;
+		case 31: name = " XCB_SELECTION_NOTIFY  "; break;
+		case 32: name = " XCB_COLORMAP_NOTIFY  "; break;
+		case 33: name = " XCB_CLIENT_MESSAGE  "; break;
+		case 34: name = " XCB_MAPPING_NOTIFY  "; break;
+		case 35: name = " XCB_GE_GENERIC "; break;
+	}
+	printf(name);
+	printf("\n");
+
+}
 
 void draw_clock(
 		xcb_connection_t *xc, 
@@ -317,3 +395,34 @@ xcb_window_t get_manager_selection_owner(xcb_connection_t *xc,int *reterr){
 	printf("Manager Selection Owner ID = 0x%x\n", reply->owner);
 	return reply->owner;
 }
+
+void send_dock_message(
+		xcb_connection_t *xc, 
+		xcb_window_t win,
+		xcb_window_t owner,
+		int *sequence_memo) {
+	xcb_client_message_event_t dockmsg;
+	dockmsg.response_type = XCB_CLIENT_MESSAGE; //
+	dockmsg.format = 32; // options: 8, 16, 32
+	dockmsg.sequence = *sequence_memo;
+	dockmsg.window = win; //icon window ID 
+	dockmsg.type = get_atom_from_name(xc,"_NET_SYSTEM_TRAY_OPCODE"); 
+	dockmsg.data.data32[0] = XCB_CURRENT_TIME;
+	dockmsg.data.data32[1] = 0; //SYSTEM_TRAY_REQUEST_DOCK
+	dockmsg.data.data32[2] = win;
+	dockmsg.data.data32[3] = 0;
+	dockmsg.data.data32[4] = 0;
+
+	xcb_send_event(
+			xc,
+			0, // propagate = false
+			owner,
+			XCB_EVENT_MASK_NO_EVENT,
+			(const char *)&dockmsg 
+			);
+	*sequence_memo +=1;
+	xcb_flush(xc);
+	printf("Wait for reparenting\n");
+}
+
+
