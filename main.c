@@ -27,6 +27,8 @@ void send_dock_message(
 		xcb_window_t owner,
 		int *sequence_memo);
 
+void print_event_name_from_response_type (int resp);
+
 int main(int argc, char *argv[]){
 
 	int icon_size = 200;
