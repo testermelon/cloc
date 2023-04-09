@@ -7,6 +7,8 @@
 #include<time.h>
 #include<string.h>
 
+void print_event_name_from_response_type (int resp);
+
 xcb_atom_t get_atom_from_name(
 		xcb_connection_t *xc, 
 		char * name);
@@ -26,8 +28,6 @@ void send_dock_message(
 		xcb_window_t win,
 		xcb_window_t owner,
 		int *sequence_memo);
-
-void print_event_name_from_response_type (int resp);
 
 int main(int argc, char *argv[]){
 
@@ -72,16 +72,12 @@ int main(int argc, char *argv[]){
 	//at this point visual_type contains the correct visual struct
 	//I should read the docs of iterator facilities in xcb lol
 
-	//TODO ask the dimension of the available tray window
-	
-
 	//generate id for window
 	xcb_window_t 
 		win = xcb_generate_id(xc);
 	printf( "Newly Generated Window ID = 0x%x\n", (int)win );
 
 	//create icon window
-	
 	uint32_t mask = 
 		XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
 	uint32_t values[2] = {
@@ -128,17 +124,10 @@ int main(int argc, char *argv[]){
 		owner = get_manager_selection_owner(xc,&err);
 	}
 
-	//send docking request to 
+	//after sure manager exists and id known
 	send_dock_message(xc, win, owner, &sequence_memo);
 	xcb_flush(xc);
 
-	//show window
-	//xcb_map_window(xc,win);
-	//xcb_flush(xc);
-	//printf("Window map request sent\n");
-
-
-	//loop while no connection error
 	printf("Entering Event loop\n");
 	while(xcb_connection_has_error(xc) == 0){
 
@@ -160,11 +149,13 @@ int main(int argc, char *argv[]){
 				xcb_expose_event_t *expose = (xcb_expose_event_t *)ev;
 				printf("    H = %d, W = %d\n", expose->height, expose->width);
 
+				//obtain drawing dimension
 				if(expose->height > expose->width) 
 					icon_size=expose->width;
 				else
 					icon_size=expose->height;
 
+				//finally we get to draw
 				draw_clock(xc,win,visual_type,icon_size);
 				xcb_flush(xc); 
 				last_time_draw_seconds = time(NULL);
@@ -175,19 +166,13 @@ int main(int argc, char *argv[]){
 
 				if( button->detail == 1 ){
 					//left mouse click
-					//xcb_unmap_window(xc,win); // i don't know why I need to unmap when trying to minimize to systray
-					//send_dock_message(xc, win, owner, &sequence_memo);
 				}
 			}break;
 			case XCB_REPARENT_NOTIFY: {
 				xcb_reparent_notify_event_t *rep = (xcb_reparent_notify_event_t *)ev;
 				printf("    new parent = 0x%x\n",rep->parent);
 
-				//check if wm still exist
-				//xcb_window_t check_wm;
-				//check_wm = get_manager_selection_owner(xc,&err);
-				//printf("    old manager = %d, new manager = %d\n", (int)check_wm, (int)owner);
-
+				//only map window when new parent is not root, because root means we are being orphaned by the window manager
 				if(rep->parent != screen->root) {
 					xcb_map_window(xc,win); 
 					xcb_flush(xc);
@@ -195,6 +180,8 @@ int main(int argc, char *argv[]){
 
 			}break;
 			case XCB_UNMAP_NOTIFY: {
+				//assume unmap happens due to manager is down
+				//reinitiate poll for new manager
 				owner = get_manager_selection_owner(xc,&err);
 
 				while(err || (owner==0) ){
@@ -223,12 +210,6 @@ int main(int argc, char *argv[]){
 		//with close button
 		//and "press any button to close" functionality
 		
-
-
-		//flush every loop to make sure things are drawn
-		//NOTE: Things did occasionally not drawn if unlucky 
-		//(needs to hide-unhide window multiple times to get it drawn sometimes)
-		//
 		//TODO: Handle signals so we can exit gracefully
 		
 		free(ev);
