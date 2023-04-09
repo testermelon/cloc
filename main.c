@@ -70,30 +70,16 @@ int main(int argc, char *argv[]){
 	//at this point visual_type contains the correct visual struct
 	//I should read the docs of iterator facilities in xcb lol
 
-	//get the owner window of manager selection, 
-	xcb_window_t owner;
-	int err=0;
-	owner = get_manager_selection_owner(xc,&err);
-
-	while(err){
-		printf("Tray not found\n");
-		sleep(1);
-		owner = get_manager_selection_owner(xc,&err);
-	}
-
 	//TODO ask the dimension of the available tray window
 	
 
-	//gen id for window
+	//generate id for window
 	xcb_window_t 
 		win = xcb_generate_id(xc);
-
 	printf( "Newly Generated Window ID = 0x%x\n", (int)win );
-	
 
 	//create icon window
-		//use a block to force short lifetime of these vars
-		//prepare masks and values
+	
 	uint32_t mask = 
 		XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
 	uint32_t values[2] = {
@@ -103,7 +89,6 @@ int main(int argc, char *argv[]){
 		XCB_EVENT_MASK_PROPERTY_CHANGE |
 		XCB_EVENT_MASK_STRUCTURE_NOTIFY
 	};
-
 	xcb_create_window(
 		xc, 
 		XCB_COPY_FROM_PARENT, 
@@ -115,7 +100,6 @@ int main(int argc, char *argv[]){
 		XCB_WINDOW_CLASS_INPUT_OUTPUT, 
 		screen->root_visual, 
 		mask, values);
-
 	printf("Created New Window\n");
 
 	//set window properties
@@ -130,6 +114,19 @@ int main(int argc, char *argv[]){
 			"cloc"
 			);
 
+	//get the owner window of manager selection 
+	xcb_window_t owner;
+	int err=0;
+	owner = get_manager_selection_owner(xc,&err);
+
+	//poll every 0.1s in case error or not found (zero means not found I guess? ) 
+	while(err || (owner==0) ){
+		printf("Tray not found\n");
+		sleep(0.1);
+		owner = get_manager_selection_owner(xc,&err);
+	}
+
+	//send docking request to 
 	send_dock_message(xc, win, owner, &sequence_memo);
 	xcb_flush(xc);
 
@@ -194,9 +191,15 @@ int main(int argc, char *argv[]){
 					xcb_flush(xc);
 				}
 
-				//if(rep->parent == screen->root){ xcb_map_window(xc,win); xcb_flush(xc); }
 			}break;
 			case XCB_UNMAP_NOTIFY: {
+				owner = get_manager_selection_owner(xc,&err);
+
+				while(err || (owner==0) ){
+					printf("Tray not found\n");
+					sleep(0.1);
+					owner = get_manager_selection_owner(xc,&err);
+				}
 				send_dock_message(xc, win, owner, &sequence_memo);
 				xcb_flush(xc);
 		    }break;
