@@ -6,6 +6,7 @@
 #include<cairo.h>
 #include<time.h>
 #include<string.h>
+#include<pthread.h>
 
 void print_event_name_from_response_type (int resp);
 
@@ -29,6 +30,33 @@ void send_dock_message(
 		xcb_window_t owner,
 		int *sequence_memo);
 
+struct xc_details {
+	int *counter;
+	xcb_connection_t *xc;
+	xcb_window_t win;
+	xcb_visualtype_t *visual_type;
+	uint32_t size;
+};
+
+void *timer_thread_f(void *arg0){
+	struct xc_details *arg = arg0;
+	int *counter = arg->counter;
+	xcb_connection_t *xc = arg->xc;
+	xcb_window_t win = arg->win;
+	xcb_visualtype_t *visual_type = arg->visual_type;
+	uint32_t size = arg->size;
+	while(1){
+		if(*counter>0) 
+			(*counter)--;
+		else{
+			draw_clock(xc,win,visual_type,size);
+			*counter=15;
+		}
+		sleep(1);
+		//printf("sleep -> counter = %d\n",*counter);
+	}
+}
+
 int main(int argc, char *argv[]){
 
 	int icon_size = 200;
@@ -38,9 +66,6 @@ int main(int argc, char *argv[]){
 	//take memo of current seq no.
 	int sequence_memo = 0;
 	
-	//initialize memo of time 
-	time_t last_time_draw_seconds = time(NULL);
-
 	//connect to X server
 	xcb_connection_t 	*xc;
 	xc = xcb_connect(NULL,NULL); //(display name, screen no)
@@ -128,18 +153,22 @@ int main(int argc, char *argv[]){
 	send_dock_message(xc, win, owner, &sequence_memo);
 	xcb_flush(xc);
 
+	//preparing timer thread
+	int counter = 15;
+	struct xc_details xcd;
+		xcd.counter = &counter;
+		xcd.xc = xc;
+		xcd.win = win;
+		xcd.visual_type = visual_type;
+		xcd.size = icon_size;
+
+	pthread_t thread_id;
+	pthread_create(&thread_id,NULL,timer_thread_f,&xcd);
+
 	printf("Entering Event loop\n");
 	while(xcb_connection_has_error(xc) == 0){
 
-		//Draw clock when 15 seconds passed since last draw
-		if(time(NULL) - last_time_draw_seconds > 15 ) {
-			draw_clock(xc,win,visual_type,icon_size);
-			xcb_flush(xc);
-			last_time_draw_seconds = time(NULL);
-			printf("15 Seconds Timeout -> redraw at %d\n", (int)last_time_draw_seconds);
-		}
-		
-		ev = xcb_poll_for_event(xc);
+		ev = xcb_wait_for_event(xc);
 		if(ev == NULL) continue;
 
 		print_event_name_from_response_type(ev->response_type);
@@ -158,7 +187,7 @@ int main(int argc, char *argv[]){
 				//finally we get to draw
 				draw_clock(xc,win,visual_type,icon_size);
 				xcb_flush(xc); 
-				last_time_draw_seconds = time(NULL);
+				counter = 15;
 			}break;
 			case XCB_BUTTON_PRESS: {
 				xcb_button_press_event_t *button = (xcb_button_press_event_t *)ev;
